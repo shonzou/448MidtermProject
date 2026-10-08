@@ -14,6 +14,8 @@ CSV_FILE = "exampledata.csv" # replace with data.csv when that gets populated
 SEED = 0; torch.manual_seed(SEED) # random seed
 MAX_LEN = 1024
 
+MINIMUM_FREQUENCY = 2 # number of times a word has to appear in training data to get tokenized
+
 BATCH_SIZE = 32
 EPOCHS = 20
 LEARNING_RATE = 0.001
@@ -21,15 +23,10 @@ LEARNING_RATE = 0.001
 EMBEDDING_DIM = 128
 KERNEL_SIZE = 4
 
-vocab = {
-    "<PAD>": 0, # padding 
-    "<UNK>": 1  # unknown word
-}
-
 def tokenize(text):
     return re.findall(r"\b\w+\b", text.lower())
 
-def encode(text):
+def encode(text, vocab):
     tokens = tokenize(text)
 
     return [
@@ -37,8 +34,8 @@ def encode(text):
         for token in tokens]
 
 # CNN requires same dimensions per record so pad with <PAD>
-def padded_encode(text):
-    ids = encode(text)
+def padded_encode(text, vocab):
+    ids = encode(text, vocab)
 
     if len(ids) > MAX_LEN:
         ids = ids[:MAX_LEN]
@@ -71,20 +68,20 @@ def evaluate(model, loader, device):
 # NOTE: for more information on CNN see chapter 6
 class CNNClassifier(nn.Module):
     # embedding_dim: how many numbers to represent a token
-    def __init__(self, vocab_size, num_classes, embedding_dim = 128):
+    def __init__(self, vocab_size, num_classes):
         super().__init__()
 
         # embedding layer (huge lookup table)
         self.embedding = nn.Embedding(
             vocab_size,
-            embedding_dim,
+            EMBEDDING_DIM,
             padding_idx = 0 # token 0 <PAD> in vocab is the padding ID
         )
 
         # 1D convoluition
         self.conv = nn.Conv1d( 
-            in_channels = embedding_dim,
-            out_channels = embedding_dim, # number of channels in new sequence
+            in_channels = EMBEDDING_DIM,
+            out_channels = EMBEDDING_DIM, # number of channels in new sequence
             kernel_size = KERNEL_SIZE # number of tokens processed (sliding window) at a time 
         )
 
@@ -95,7 +92,7 @@ class CNNClassifier(nn.Module):
 
         # linear transformation
         self.fc = nn.Linear(
-            embedding_dim,
+            EMBEDDING_DIM,
             num_classes
         )
 
@@ -120,28 +117,31 @@ class CNNClassifier(nn.Module):
 class TextDataset(Dataset):
     # initialize dataset
     def __init__(
-        self, dataframe, text_column, label_map):
+        self, dataframe, text_column, label_map, vocab):
         self.texts = dataframe[text_column].tolist()
         self.labels = [
             label_map[label]
             for label in dataframe["llm_name"]
         ]
+        self.vocab = vocab
 
     def __len__(self):
         return len(self.texts)
 
     def __getitem__(self, idx):
-        x = padded_encode(self.texts[idx])
+        x = padded_encode(self.texts[idx], self.vocab)
         y = self.labels[idx]
 
         return torch.tensor(x), torch.tensor(y)
 
-def main():
+def load_data():
     df = pd.read_csv(CSV_FILE) 
-
+    
     print(df.head())
     print(df["llm_name"].value_counts())
+    return df 
 
+def split_data(df):
     # split by prompt so that the same prompt doesn't get put in two diff sets
     prompt_ids = df["prompt"].unique()
 
@@ -164,27 +164,46 @@ def main():
     val_df = df[df["prompt"].isin(val_ids)]
     test_df = df[df["prompt"].isin(test_ids)]
 
+    return train_df, val_df, test_df
+
+def build_vocab(train_df, text_column):
+    vocab = {
+        "<PAD>": 0,
+        "<UNK>": 1
+    }
+
     # convert tokens to integers for processing
     counter = Counter()
 
-    for text in train_df["output"]:
+    for text in train_df[text_column]:
         counter.update(tokenize(text))
 
     for word, count in counter.items():
-        if count >= 2:
+        if count >= MINIMUM_FREQUENCY:
             vocab[word] = len(vocab)
 
-    llm_name = sorted(train_df["llm_name"].unique())
+    return vocab
 
-    map_label_id = {
+def create_label_map(train_df):
+    llm_names = sorted(train_df["llm_name"].unique())
+
+    return {
         label: i
-        for i, label in enumerate(llm_name)
+        for i, label in enumerate(llm_names)
     }
 
+def create_dataloaders(
+    train_df,
+    val_df,
+    test_df,
+    text_column,
+    label_map,
+    vocab,
+):
     # pytorch's Dataset easier interface than regular arrays
-    train_dataset = TextDataset(train_df, "output", map_label_id)
-    val_dataset = TextDataset(val_df, "output", map_label_id)
-    test_dataset = TextDataset(test_df, "output", map_label_id)
+    train_dataset = TextDataset(train_df, text_column, label_map, vocab)
+    val_dataset = TextDataset(val_df, text_column, label_map, vocab)
+    test_dataset = TextDataset(test_df, text_column, label_map, vocab)
 
     # TODO: train and evaluate classifier using LLM input only for RQ2
     # TODO: train and evaluate classifier using LLM input and output for RQ2
@@ -206,21 +225,16 @@ def main():
         test_dataset,
         batch_size = BATCH_SIZE
     )
+    return train_loader, val_loader, test_loader
 
-    # small optimization that chooses a NVIDIA GPU if possible (I have a NVIDIA GPU so this
-    # benefits me specifically)
-    device = torch.device (
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
-
-    model = CNNClassifier(
-        vocab_size = len(vocab),
-        num_classes = len(map_label_id),
-        embedding_dim = EMBEDDING_DIM,
-    )
-
+def train_model(
+    model,
+    train_loader,
+    val_loader,
+    device,
+):
     criterion = nn.CrossEntropyLoss()
-
+    
     # Adam adaptive learning rate optimizer from ch 9
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -229,7 +243,7 @@ def main():
 
     model = model.to(device)
 
-    best_val_acc = 0
+    best_val_acc = -1
 
     #TODO add early stopping within validation
     for epoch in range(EPOCHS):
@@ -262,13 +276,54 @@ def main():
             )
 
         print(
-            f"Epoch {epoch+1}: "
-            f"Loss = {total_loss / len(train_loader):.4f}, "
-            f"Val Accuracy = {val_acc:.2%}"
+            f"epoch {epoch+1}: "
+            f"loss = {total_loss / len(train_loader):.4f}, "
+            f"validation acc = {val_acc:.2%}"
         )
 
     # load the best CNN
     model.load_state_dict(torch.load("cnn.pt", weights_only = True))
+    return model
+
+def main():
+    df = load_data()
+
+    train_df, val_df, test_df = split_data(df)
+
+    vocab = build_vocab(train_df, "output")
+
+    # TODO: train and evaluate classifier using LLM input only for RQ2
+    # TODO: train and evaluate classifier using LLM input and output for RQ2
+
+    label_map = create_label_map(train_df)
+
+    train_loader, val_loader, test_loader = create_dataloaders(
+        train_df,
+        val_df,
+        test_df,
+        "output",
+        label_map,
+        vocab
+    )
+
+    # small optimization that chooses a NVIDIA GPU if possible (I have a NVIDIA GPU so this
+    # benefits me specifically)
+    device = torch.device (
+        "cuda" if torch.cuda.is_available() else "cpu"
+    )
+
+    model = CNNClassifier(
+        vocab_size = len(vocab),
+        num_classes = len(label_map),
+    )
+
+    model = train_model(
+        model,
+        train_loader,
+        val_loader,
+        device,
+    )
+
     model.eval()
 
     test_pred = []
@@ -293,7 +348,7 @@ def main():
     per_class_report = mtr.classification_report(
         test_labels,
         test_pred,
-        target_names = list(map_label_id.keys())
+        target_names = list(label_map.keys())
     )
     print(per_class_report)
     print(f"{'Accuracy:':<20}{acc:.2%}\n{'Balanced Accuracy:':<20}{acc_balanced:.2%}")
