@@ -346,11 +346,6 @@ def main():
         model_path = "cnn.pt",
     )
 
-    model.eval()
-
-    test_pred = []
-    test_labels = []
-
     evaluate_model(
         model,
         test_loader,

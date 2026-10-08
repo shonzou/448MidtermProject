@@ -2,6 +2,26 @@ from datasets import load_dataset, Dataset
 from typing import Any, cast
 import pandas as pd
 import csv
+import re
+from collections import Counter
+
+NUM_FAMILIES = 6
+FAMILY_PATTERNS = {
+    "Claude":   r"claude",
+    "GPT":      r"chatgpt|gpt|o\d",
+    "Gemini":   r"gemini",
+    "Gemma":    r"gemma",
+    "Qwen":     r"qwen|qwq",
+    "Llama":    r"llama",
+    "DeepSeek": r"deepseek",
+    "Grok":     r"grok",
+    "Mistral":  r"mistral|magistral",
+    "Cohere":   r"command",
+    "Nova":     r"nova",
+    "MiniMax":  r"minimax",
+    "Kimi":     r"kimi",
+    "Hunyuan":  r"hunyuan",
+}
 
 saved_log = []
 
@@ -62,9 +82,69 @@ def split_records(data):
 
     return new_records
 
+def model_to_family(model):
+    model = model.lower()
+
+    for family, pattern in FAMILY_PATTERNS.items():
+        if re.search(pattern, model.lower()):
+            return family
+    return None 
+
+# grabs number of models belong to each family
+def get_family_counts(data):
+    family_counts = Counter()
+    unmatched_models = Counter()
+
+    for record in data:
+        family = model_to_family(record["model"])
+
+        if family is not None:
+            family_counts[family] += 1
+        else:
+            unmatched_models[record["model"]] += 1
+
+    log("Family counts:")
+    for family, count in family_counts.most_common():
+        log(f"{family:<11}| {count}")
+
+    if unmatched_models:
+        log("Unmatched models:")
+        for model, count in unmatched_models.most_common():
+            log(f"{model:<30}| {count}")
+
+    return family_counts
+
+# filter out anything that's not the top NUM_FAMILIES families in terms of number of instances
+def filter_families(data, num_families):
+    family_counts = get_family_counts(data)
+    selected_families = [family for family, _ in family_counts.most_common(num_families)]
+    selected_families = set(selected_families)
+
+    log(f"Selected families {', '.join(selected_families)}")
+
+    filtered_data = []
+
+    for record in data:
+        record: dict[str, Any]
+        family = model_to_family(record["model"])
+
+        if family in selected_families:
+            new_record = record.copy()
+            new_record["llm_name"] = family
+            filtered_data.append(new_record)
+
+    log(f"Records after filtering out families: {len(filtered_data)}")
+    return filtered_data, selected_families
+
+
 def main():
     data = load_data()
     data = split_records(data)
+    data, selected_families = filter_families(data, NUM_FAMILIES)
+
+    get_family_counts(data)
+
+    
 
     # args = parse_args()
 
