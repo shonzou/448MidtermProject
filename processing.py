@@ -46,7 +46,7 @@ def padded_encode(text, vocab):
     return ids
 
 # validation
-def evaluate(model, loader, device):
+def get_predictions(model, loader, device):
     model.eval()
 
     predictions = []
@@ -58,12 +58,32 @@ def evaluate(model, loader, device):
 
             # note: a logit is a final linear layer output
             logits = model(x)
-            preds = logits.argmax(dim = 1)
+            preds = logits.argmax(dim=1)
 
             predictions.extend(preds.cpu().numpy())
             actual.extend(y.numpy())
 
+    return predictions, actual
+
+def evaluate_acc(model, loader, device):
+    predictions, actual = get_predictions(model, loader, device)
     return mtr.accuracy_score(actual, predictions)
+
+# validation
+def evaluate_model(model, test_loader, device, label_map):
+    predictions, actual = get_predictions(model, test_loader, device)
+    
+    # gauge the accuracy of the model
+    acc = mtr.accuracy_score(actual, predictions)
+    acc_balanced = mtr.balanced_accuracy_score(actual, predictions)
+    per_class_report = mtr.classification_report(
+        actual,
+        predictions,
+        target_names=list(label_map.keys())
+    )
+    print(per_class_report)
+    print(f"{'Accuracy:':<20}{acc:.2%}\n{'Balanced Accuracy:':<20}{acc_balanced:.2%}")
+    return acc, acc_balanced
 
 # NOTE: for more information on CNN see chapter 6
 class CNNClassifier(nn.Module):
@@ -232,6 +252,7 @@ def train_model(
     train_loader,
     val_loader,
     device,
+    model_path,
 ):
     criterion = nn.CrossEntropyLoss()
     
@@ -265,14 +286,14 @@ def train_model(
             total_loss += loss.item()
 
         # validating
-        val_acc = evaluate(model, val_loader, device)
+        val_acc = evaluate_acc(model, val_loader, device)
         if val_acc > best_val_acc:
             best_val_acc = val_acc
 
             # save the best found CNN based on found validation accuracy
             torch.save(
                 model.state_dict(),
-                "cnn.pt"
+                model_path
             )
 
         print(
@@ -282,7 +303,7 @@ def train_model(
         )
 
     # load the best CNN
-    model.load_state_dict(torch.load("cnn.pt", weights_only = True))
+    model.load_state_dict(torch.load(model_path, weights_only = True))
     return model
 
 def main():
@@ -322,6 +343,7 @@ def main():
         train_loader,
         val_loader,
         device,
+        model_path = "cnn.pt",
     )
 
     model.eval()
@@ -329,29 +351,12 @@ def main():
     test_pred = []
     test_labels = []
 
-    with torch.no_grad():
-        for inputs, labels in test_loader:
-            inputs = inputs.to(device)
-            predictions = model(inputs)
-            predicted_labels = predictions.argmax(dim = 1)
-            test_pred.extend(
-                predicted_labels.cpu().numpy()
-            )
-            test_labels.extend(
-                labels.numpy()
-            )
-
-
-    # gauge the accuracy of the model
-    acc = mtr.accuracy_score(test_labels, test_pred)
-    acc_balanced = mtr.balanced_accuracy_score(test_labels, test_pred)
-    per_class_report = mtr.classification_report(
-        test_labels,
-        test_pred,
-        target_names = list(label_map.keys())
+    evaluate_model(
+        model,
+        test_loader,
+        device,
+        label_map
     )
-    print(per_class_report)
-    print(f"{'Accuracy:':<20}{acc:.2%}\n{'Balanced Accuracy:':<20}{acc_balanced:.2%}")
 
     # TODO: compare CNN and RNN performance when RNN is set up
     # TODO: testing between code/programming prompts and non-code prompts
