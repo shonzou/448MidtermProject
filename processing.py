@@ -4,13 +4,22 @@ import torch
 from sklearn.model_selection import train_test_split
 from collections import Counter
 from torch.utils.data import Dataset
-
+import torch.nn as nn
+import sklearn.metrics as mtr
+from torch.utils.data import DataLoader
 
 CSV_FILE = "exampledata.csv" # replace with data.csv when that gets populated
+
+#TODO have these as arguments in CLI instead maybe
+SEED = 0; torch.manual_seed(SEED) # random seed
 MAX_LEN = 1024
 
-SEED = 0
-torch.manual_seed(SEED) # random seed
+BATCH_SIZE = 32
+EPOCHS = 20
+LEARNING_RATE = 0.001
+
+EMBEDDING_DIM = 128
+KERNEL_SIZE = 4
 
 vocab = {
     "<PAD>": 0, # padding 
@@ -38,6 +47,75 @@ def padded_encode(text):
         ids += [vocab["<PAD>"]] * (MAX_LEN - len(ids))
 
     return ids
+
+# validation
+def evaluate(model, loader, device):
+    model.eval()
+
+    predictions = []
+    actual = []
+
+    with torch.no_grad():
+        for x, y in loader:
+            x = x.to(device)
+
+            # note: a logit is a final linear layer output
+            logits = model(x)
+            preds = logits.argmax(dim = 1)
+
+            predictions.extend(preds.cpu().numpy())
+            actual.extend(y.numpy())
+
+    return mtr.accuracy_score(actual, predictions)
+
+# NOTE: for more information on CNN see chapter 6
+class CNNClassifier(nn.Module):
+    # embedding_dim: how many numbers to represent a token
+    def __init__(self, vocab_size, num_classes, embedding_dim = 128):
+        super().__init__()
+
+        # embedding layer (huge lookup table)
+        self.embedding = nn.Embedding(
+            vocab_size,
+            embedding_dim,
+            padding_idx = 0 # token 0 <PAD> in vocab is the padding ID
+        )
+
+        # 1D convoluition
+        self.conv = nn.Conv1d( 
+            in_channels = embedding_dim,
+            out_channels = embedding_dim, # number of channels in new sequence
+            kernel_size = KERNEL_SIZE # number of tokens processed (sliding window) at a time 
+        )
+
+        # this is an activation function type (I grabbed from EE 456)
+        self.relu = nn.ReLU() 
+        # variant of max pooling (ch 7) grabbing strongest activation for each feature across ENTIRE sequence
+        self.pool = nn.AdaptiveMaxPool1d(1) 
+
+        # linear transformation
+        self.fc = nn.Linear(
+            embedding_dim,
+            num_classes
+        )
+
+    # forward pass 
+    def forward(self, features):
+        features = self.embedding(features)
+
+        features = features.permute(0, 2, 1)  # conv expects different format so we gotta permute
+
+        features = self.conv(features)
+        features = self.relu(features)
+
+        features = self.pool(features)
+
+        features = features.squeeze(-1)       # remove a remaining unneeded dimension
+
+        logits = self.fc(features)            # note: a logit is the final layer of vectors (raw predictions) 
+        return logits
+
+#TODO: Implement RNN using LSTM
 
 class TextDataset(Dataset):
     # initialize dataset
@@ -107,3 +185,118 @@ def main():
     train_dataset = TextDataset(train_df, "output", map_label_id)
     val_dataset = TextDataset(val_df, "output", map_label_id)
     test_dataset = TextDataset(test_df, "output", map_label_id)
+
+    # TODO: train and evaluate classifier using LLM input only for RQ2
+    # TODO: train and evaluate classifier using LLM input and output for RQ2
+
+    # wrappers for Datasets
+    # give NNs {BATCH_SIZE} examples at a time
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size = BATCH_SIZE,
+        shuffle = True
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size = BATCH_SIZE
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size = BATCH_SIZE
+    )
+
+    # small optimization that chooses a NVIDIA GPU if possible (I have a NVIDIA GPU so this
+    # benefits me specifically)
+    device = torch.device (
+        "cuda" if torch.cuda.is_available() else "cpu"
+    )
+
+    model = CNNClassifier(
+        vocab_size = len(vocab),
+        num_classes = len(map_label_id),
+        embedding_dim = EMBEDDING_DIM,
+    )
+
+    criterion = nn.CrossEntropyLoss()
+
+    # Adam adaptive learning rate optimizer from ch 9
+    optimizer = torch.optim.Adam(
+        model.parameters(),
+        lr = LEARNING_RATE       # learning rate
+    )
+
+    model = model.to(device)
+
+    best_val_acc = 0
+
+    #TODO add early stopping within validation
+    for epoch in range(EPOCHS):
+        model.train()
+
+        total_loss = 0  # calculating the loss from training
+        for inputs, labels in train_loader:
+            inputs = inputs.to(device)
+            labels = labels.to(device)
+            optimizer.zero_grad()   # clear previous batch's gradients
+
+            predictions = model(inputs) # forward pass
+
+            loss = criterion(predictions, labels)
+
+            loss.backward() # backpropagation
+            optimizer.step() # change parameters
+
+            total_loss += loss.item()
+
+        # validating
+        val_acc = evaluate(model, val_loader, device)
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+
+            # save the best found CNN based on found validation accuracy
+            torch.save(
+                model.state_dict(),
+                "cnn.pt"
+            )
+
+        print(
+            f"Epoch {epoch+1}: "
+            f"Loss = {total_loss / len(train_loader):.4f}, "
+            f"Val Accuracy = {val_acc:.2%}"
+        )
+
+    # load the best CNN
+    model.load_state_dict(torch.load("cnn.pt", weights_only = True))
+    model.eval()
+
+    test_pred = []
+    test_labels = []
+
+    with torch.no_grad():
+        for inputs, labels in test_loader:
+            inputs = inputs.to(device)
+            predictions = model(inputs)
+            predicted_labels = predictions.argmax(dim = 1)
+            test_pred.extend(
+                predicted_labels.cpu().numpy()
+            )
+            test_labels.extend(
+                labels.numpy()
+            )
+
+
+    # gauge the accuracy of the model
+    acc = mtr.accuracy_score(test_labels, test_pred)
+    acc_balanced = mtr.balanced_accuracy_score(test_labels, test_pred)
+    per_class_report = mtr.classification_report(
+        test_labels,
+        test_pred,
+        target_names = list(map_label_id.keys())
+    )
+    print(per_class_report)
+    print(f"{'Accuracy:':<20}{acc:.2%}\n{'Balanced Accuracy:':<20}{acc_balanced:.2%}")
+
+    # TODO: compare CNN and RNN performance when RNN is set up
+    # TODO: testing between code/programming prompts and non-code prompts
