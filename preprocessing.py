@@ -42,19 +42,22 @@ def split_records(data):
     new_records = []
 
     for record in data:
-        conv_a = record["conversation_a"]
-        conv_b = record["conversation_b"]
+        for model, conv in [
+            (record["model_a"], record["conversation_a"]),
+            (record["model_b"], record["conversation_b"]),
+        ]:
+            # "user" 
+            prompt = conv[0]["content"]
+            # "assistant"
+            output = conv[1]["content"]
 
-        record_a = {
-            "model": record["model_a"],
-            "conv": conv_a
-        }
-        record_b = {
-            "model": record["model_b"],
-            "conv": conv_b
-        }
-
-        new_records.append(record_a); new_records.append(record_b)
+            new_records.append({
+                "model": model,
+                "prompt": prompt,
+                "output": output,
+                "is_code": record["is_code"],
+                "id": record["id"], # debugging purposes only
+            })
     log(f"Split records: {len(new_records)}")
 
     return new_records
@@ -62,8 +65,6 @@ def split_records(data):
 def main():
     data = load_data()
     data = split_records(data)
-
-    print(data[0]["conv"])
 
     # args = parse_args()
 
