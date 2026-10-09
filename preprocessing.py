@@ -8,6 +8,7 @@ from collections import Counter
 
 SEED = 0; manual_seed(SEED) # random seed
 
+OUTPUT_COLUMNS = ["llm_name", "prompt", "output", "is_code"]
 NUM_FAMILIES = 4
 FAMILY_PATTERNS = {
     "Claude":   r"claude",
@@ -137,7 +138,7 @@ def filter_families(data, num_families):
             filtered_data.append(new_record)
 
     log(f"Records after filtering out families: {len(filtered_data)}")
-    return filtered_data, selected_families
+    return filtered_data
 
 # check is_code distribution, will be useful in implementing RQ3
 def see_code_distr(data):
@@ -171,15 +172,24 @@ def balance_families(data):
 
 #TODO: implement balancing data for is_code as well
 
+def build_csv(data, path = "exampledata.csv"):
+    df = pd.DataFrame(data)
+    df = df[OUTPUT_COLUMNS]
+
+    df["is_code"] = df["is_code"].astype(int)
+
+    df.to_csv(path, index = False, lineterminator = "\n") # alr bro who decided line_terminator shouldn't have an underscore
+    log(f"Saved {len(df)} records to {path}")
+
+
 def main():
     data = load_data()
     data = split_records(data)
-    data, selected_families = filter_families(data, NUM_FAMILIES)   
+    data = filter_families(data, NUM_FAMILIES)   
     see_code_distr(data)
     data = balance_families(data)
     see_code_distr(data)
-
-
+    build_csv(data)
 
 if __name__ == "__main__":
     main()
