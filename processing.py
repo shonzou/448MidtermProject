@@ -207,8 +207,8 @@ def build_vocab(train_df, text_column):
 
     return vocab
 
-def create_label_map(train_df):
-    llm_names = sorted(train_df["llm_name"].unique())
+def create_label_map(df):
+    llm_names = sorted(df["llm_name"].unique())
 
     return {
         label: i
