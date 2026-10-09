@@ -3,9 +3,12 @@ from typing import Any, cast
 import pandas as pd
 import csv
 import re
+from torch import manual_seed
 from collections import Counter
 
-NUM_FAMILIES = 6
+SEED = 0; manual_seed(SEED) # random seed
+
+NUM_FAMILIES = 4
 FAMILY_PATTERNS = {
     "Claude":   r"claude",
     "GPT":      r"chatgpt|gpt|o\d",
@@ -33,7 +36,7 @@ def load_data():
     # casting to avoid type errors when printing length of dataset
     full_data = cast(
         Dataset,
-        load_dataset("lmarena-ai/arena-human-preference-140k", split="train[:50]"),
+        load_dataset("lmarena-ai/arena-human-preference-140k", split="train[:100]"),
     )
 
     log(f"Raw records: {len(full_data)}")
@@ -136,43 +139,47 @@ def filter_families(data, num_families):
     log(f"Records after filtering out families: {len(filtered_data)}")
     return filtered_data, selected_families
 
+# check is_code distribution, will be useful in implementing RQ3
+def see_code_distr(data):
+    df = pd.DataFrame(data)
+
+    counts = pd.crosstab(   # contingency table
+        df["llm_name"],
+        df["is_code"],
+        margins = True  # subtotals
+    )
+
+    log(f"Family x is_code distribution:\n{counts.to_string()}")
+    return counts
+
+def balance_families(data):
+    df = pd.DataFrame(data)
+
+    family_counts = df["llm_name"].value_counts()
+    target_count = family_counts.min()
+
+    balanced_df = (
+        df.groupby("llm_name", group_keys = False)      # don't need another layer of group IDs
+        .sample(n = target_count, random_state = SEED)  # select correct count from each group
+        .reset_index(drop = True)                       # reset index values and throw away the old ones
+    )
+
+    counts = balanced_df["llm_name"].value_counts().to_string()
+    log(f"Family counts after balancing: {counts}")
+
+    return balanced_df.to_dict("records")
+
+#TODO: implement balancing data for is_code as well
 
 def main():
     data = load_data()
     data = split_records(data)
-    data, selected_families = filter_families(data, NUM_FAMILIES)
+    data, selected_families = filter_families(data, NUM_FAMILIES)   
+    see_code_distr(data)
+    data = balance_families(data)
+    see_code_distr(data)
 
-    get_family_counts(data)
 
-    
-
-    # args = parse_args()
-
-    # battles = load_battles()
-    # df = battles_to_rows(battles)
-    # df = add_families(df)
-
-    # families = choose_families(df, args.families, args.num_families)
-    # log()
-    # log(f"selected families: {', '.join(families)}")
-
-    # df = balance_families(df, families, args.per_family, args.seed)
-
-    # for flag in ["is_code", "is_math", "is_creative_writing"]:
-    #     df[flag] = df[flag].astype(int)
-
-    # df = df[OUTPUT_COLUMNS]
-    # describe_final(df)
-
-    # args.out.parent.mkdir(parents=True, exist_ok=True)
-    # # "\n" line endings so the file is identical no matter whose OS made it
-    # df.to_csv(args.out, index=False, lineterminator="\n")
-
-    # summary_path = args.out.with_name(f"{args.out.stem}_summary.txt")
-    # summary_path.write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
-
-    # print(f"\nwrote {args.out} ({args.out.stat().st_size / 1e6:.1f} MB)")
-    # print(f"wrote {summary_path}")
 
 if __name__ == "__main__":
     main()
