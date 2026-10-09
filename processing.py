@@ -83,7 +83,10 @@ def evaluate_model(model, test_loader, device, label_map):
     )
     print(per_class_report)
     print(f"{'Accuracy:':<20}{acc:.2%}\n{'Balanced Accuracy:':<20}{acc_balanced:.2%}")
-    return acc, acc_balanced
+    return {
+        "Accuracy": acc,
+        "Accuracy Balanced": acc_balanced
+    }
 
 # NOTE: for more information on CNN see chapter 6
 class CNNClassifier(nn.Module):
@@ -305,53 +308,3 @@ def train_model(
     # load the best CNN
     model.load_state_dict(torch.load(model_path, weights_only = True))
     return model
-
-def main():
-    df = load_data()
-
-    train_df, val_df, test_df = split_data(df)
-
-    vocab = build_vocab(train_df, "output")
-
-    # TODO: train and evaluate classifier using LLM input only for RQ2
-    # TODO: train and evaluate classifier using LLM input and output for RQ2
-
-    label_map = create_label_map(train_df)
-
-    train_loader, val_loader, test_loader = create_dataloaders(
-        train_df,
-        val_df,
-        test_df,
-        "output",
-        label_map,
-        vocab
-    )
-
-    # small optimization that chooses a NVIDIA GPU if possible (I have a NVIDIA GPU so this
-    # benefits me specifically)
-    device = torch.device (
-        "cuda" if torch.cuda.is_available() else "cpu"
-    )
-
-    model = CNNClassifier(
-        vocab_size = len(vocab),
-        num_classes = len(label_map),
-    )
-
-    model = train_model(
-        model,
-        train_loader,
-        val_loader,
-        device,
-        model_path = "cnn.pt",
-    )
-
-    evaluate_model(
-        model,
-        test_loader,
-        device,
-        label_map
-    )
-
-    # TODO: compare CNN and RNN performance when RNN is set up
-    # TODO: testing between code/programming prompts and non-code prompts
