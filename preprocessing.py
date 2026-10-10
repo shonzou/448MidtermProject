@@ -112,6 +112,18 @@ def split_records(data):
 
     return new_records
 
+def remove_duplicates(data):
+    df = pd.DataFrame(data)
+
+    temp_len = len(df)
+
+    df = df.drop_duplicates(
+        subset = ["model", "prompt", "output"]
+    )
+
+    log(f"Removed {temp_len - len(df)} duplicate records")
+    return df.to_dict("records")
+
 def model_to_family(model):
     model = model.lower()
 
@@ -211,6 +223,7 @@ def build_csv(data, path = "exampledata.csv"):
 def main():
     data = load_data()
     data = split_records(data)
+    data = remove_duplicates(data)
     data = filter_families(data, NUM_FAMILIES)   
     see_code_distr(data)
     data = balance_families(data)
