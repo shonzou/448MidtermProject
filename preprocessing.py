@@ -1,7 +1,6 @@
 from datasets import load_dataset, Dataset
 from typing import Any, cast
 import pandas as pd
-import csv
 import re
 from torch import manual_seed
 from collections import Counter
@@ -131,8 +130,6 @@ def remove_duplicates(data):
     return df.to_dict("records")
 
 def model_to_family(model):
-    model = model.lower()
-
     for family, pattern in FAMILY_PATTERNS.items():
         if re.search(pattern, model.lower()):
             return family
