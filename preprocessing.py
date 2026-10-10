@@ -39,8 +39,13 @@ def load_data():
         Dataset,
         load_dataset(
             "lmarena-ai/arena-human-preference-140k", 
-            data_files = "data/train-00000-of-00007.parquet"),
+            data_files = "data/train-00000-of-00007.parquet",
+            split = "train",
+            verification_mode = "no_checks"),
     )
+
+    full_data = full_data.select_columns(["language", "conv_metadata", "is_code",
+                                          "model_a", "model_b", "conversation_a", "conversation_b", "id"])
 
     log(f"Raw records: {len(full_data)}")
 
@@ -66,7 +71,7 @@ def load_data():
 # helper function to deal with the {"type": "text", "text": [the text]} format that a conversation's messages
 # are stored in within the dataset
 def get_text(message):
-    content = message["text"]
+    content = message.get("content", [])
 
     if isinstance(content, str):
         return content.strip()
@@ -87,6 +92,8 @@ def split_records(data):
     new_records = []
 
     for record in data:
+        model: str
+        conv: list[dict[str, Any]]
         for model, conv in [
             (record["model_a"], record["conversation_a"]),
             (record["model_b"], record["conversation_b"]),
