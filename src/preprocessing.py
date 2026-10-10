@@ -19,14 +19,21 @@ terms of use.
 
 Note: no train/test splits here, processing.py does that
 '''
-
 from pathlib import Path
 
+import pandas as pd
 from datasets import load_dataset
 
 DATASET_NAME = "lmarena-ai/arena-human-preference-140k"
 DATA_FILE = "data/train-00000-of-00007.parquet"
 CSV_FILE = Path(__file__).resolve().parent.parent / "data" / "data.csv"
+
+# message content is a list of parts like {"type": "text", "text": ...}
+def message_text(message):
+    return "\n".join(
+        part["text"] for part in message["content"]
+        if part["type"] == "text" and part["text"]
+    ).strip()
 
 def main():
     # no_checks: the dataset card lists the size of all 7 files, we only load 1
@@ -35,8 +42,23 @@ def main():
                             "model_a", "model_b", "conversation_a", "conversation_b"])
     print("battles in the file:", len(ds))
 
-    # temporary: look at one message to see how the text is stored
-    print(ds[0]["conversation_a"][0])
+    # single-turn conversations are [user prompt, model response]
+    battles = []
+    for row in ds:
+        if row["language"] == "en" and row["conv_metadata"]["turns"] == 1:
+            battles.append({
+                "prompt": message_text(row["conversation_a"][0]),
+                "is_code": int(row["is_code"]),
+                "model_a": row["model_a"],
+                "output_a": message_text(row["conversation_a"][1]),
+                "model_b": row["model_b"],
+                "output_b": message_text(row["conversation_b"][1]),
+            })
+    battles = pd.DataFrame(battles)
+    print("english + single-turn:", len(battles))
+
+    # temporary: check one battle looks right
+    print(battles.iloc[0])
 
 if __name__ == "__main__":
     main()
