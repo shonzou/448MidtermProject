@@ -7,8 +7,11 @@ from torch.utils.data import Dataset
 import torch.nn as nn
 import sklearn.metrics as mtr
 from torch.utils.data import DataLoader
+from pathlib import Path
 
-CSV_FILE = "exampledata.csv" # replace with data.csv when that gets populated
+CSV_FILE = (
+    Path(__file__).resolve().parent.parent / "data" / "data.csv"
+)
 
 #TODO have these as arguments in CLI instead maybe
 SEED = 0; torch.manual_seed(SEED) # random seed

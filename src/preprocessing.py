@@ -4,9 +4,14 @@ import pandas as pd
 import re
 from torch import manual_seed
 from collections import Counter
+from pathlib import Path
 
 SEED = 0; manual_seed(SEED) # random seed
 
+DATASET_NAME = "lmarena-ai/arena-human-preference-140k"
+DATA_FILE = "data/train-00000-of-00007.parquet"
+
+CSV_FILE = Path(__file__).resolve().parent.parent / "data" / "data.csv"
 OUTPUT_COLUMNS = ["llm_name", "model", "prompt", "output", "is_code"]
 NUM_FAMILIES = 3
 FAMILY_PATTERNS = {
@@ -20,7 +25,7 @@ FAMILY_PATTERNS = {
     "Grok":     r"grok",
     "Mistral":  r"mistral|magistral",
     "Cohere":   r"command",
-    "Nova":     r"nova",
+    "Nova":     r"amazon",
     "MiniMax":  r"minimax",
     "Kimi":     r"kimi",
     "Hunyuan":  r"hunyuan",
@@ -131,7 +136,7 @@ def remove_duplicates(data):
 
 def model_to_family(model):
     for family, pattern in FAMILY_PATTERNS.items():
-        if re.search(pattern, model.lower()):
+        if re.match(pattern, model.lower()):
             return family
     return None 
 
@@ -218,7 +223,7 @@ def shuffle_data(data):
 
 #TODO: implement balancing data for is_code as well
 
-def build_csv(data, path = "exampledata.csv"):
+def build_csv(data, path = CSV_FILE):
     df = pd.DataFrame(data)
     df = df[OUTPUT_COLUMNS]
 
