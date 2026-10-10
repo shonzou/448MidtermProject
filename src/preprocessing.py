@@ -90,5 +90,14 @@ def main():
     print("responses available per family:")
     print(df["llm_name"].value_counts().to_string())
 
+    # same number of responses per family, then shuffle so the csv isn't sorted by family
+    df = df.groupby("llm_name").sample(n=PER_FAMILY, random_state=SEED)
+    df = df.sample(frac=1, random_state=SEED)
+
+    df = df[["llm_name", "model", "prompt", "output", "is_code"]]
+    # "\n" line endings so the file is identical no matter whose OS made it
+    df.to_csv(CSV_FILE, index=False, lineterminator="\n")
+    print(f"wrote {CSV_FILE} ({len(df)} rows)")
+
 if __name__ == "__main__":
     main()
