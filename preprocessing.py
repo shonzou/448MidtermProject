@@ -39,8 +39,7 @@ def load_data():
         Dataset,
         load_dataset(
             "lmarena-ai/arena-human-preference-140k", 
-            data_files = "data/train-00000-of-00007.parquet",
-            split="train[:100]"),
+            data_files = "data/train-00000-of-00007.parquet"),
     )
 
     log(f"Raw records: {len(full_data)}")
@@ -208,6 +207,11 @@ def balance_families(data):
 
     return balanced_df.to_dict("records")
 
+def shuffle_data(data):
+    df = pd.DataFrame(data)
+    df = df.sample(frac = 1, random_state = SEED).reset_index(drop = True)
+    return df.to_dict("records")
+
 #TODO: implement balancing data for is_code as well
 
 def build_csv(data, path = "exampledata.csv"):
@@ -228,6 +232,7 @@ def main():
     see_code_distr(data)
     data = balance_families(data)
     see_code_distr(data)
+    data = shuffle_data(data)
     build_csv(data)
 
 if __name__ == "__main__":
