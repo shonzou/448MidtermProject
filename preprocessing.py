@@ -8,8 +8,8 @@ from collections import Counter
 
 SEED = 0; manual_seed(SEED) # random seed
 
-OUTPUT_COLUMNS = ["llm_name", "prompt", "output", "is_code"]
-NUM_FAMILIES = 4
+OUTPUT_COLUMNS = ["llm_name", "model", "prompt", "output", "is_code"]
+NUM_FAMILIES = 3
 FAMILY_PATTERNS = {
     "Claude":   r"claude",
     "GPT":      r"chatgpt|gpt|o\d",
@@ -37,7 +37,10 @@ def load_data():
     # casting to avoid type errors when printing length of dataset
     full_data = cast(
         Dataset,
-        load_dataset("lmarena-ai/arena-human-preference-140k", split="train[:100]"),
+        load_dataset(
+            "lmarena-ai/arena-human-preference-140k", 
+            data_files = "data/train-00000-of-00007.parquet",
+            split="train[:100]"),
     )
 
     log(f"Raw records: {len(full_data)}")
