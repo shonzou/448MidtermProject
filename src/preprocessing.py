@@ -19,6 +19,7 @@ terms of use.
 
 Note: no train/test splits here, processing.py does that
 '''
+import re
 from pathlib import Path
 
 import pandas as pd
@@ -28,6 +29,24 @@ DATASET_NAME = "lmarena-ai/arena-human-preference-140k"
 DATA_FILE = "data/train-00000-of-00007.parquet"
 CSV_FILE = Path(__file__).resolve().parent.parent / "data" / "data.csv"
 
+PER_FAMILY = 2000
+SEED = 0 # same seed as processing.py
+
+# model name -> family, matched against the start of the lowercased model name
+#   * o-series reasoning models (o3, o3-mini, o4-mini) are OpenAI, so GPT
+#   * "-thinking" variants stay in their base model's family
+#   * every other model (Llama, Qwen, Gemma, DeepSeek, ...) is dropped
+FAMILY_PATTERNS = {
+    "Claude": r"claude",
+    "GPT":    r"chatgpt|gpt|o\d",
+    "Gemini": r"gemini",
+}
+
+def model_to_family(model):
+    for family, pattern in FAMILY_PATTERNS.items():
+        if re.match(pattern, model.lower()):
+            return family
+    return None
 # message content is a list of parts like {"type": "text", "text": ...}
 def message_text(message):
     return "\n".join(
@@ -66,8 +85,10 @@ def main():
     df = df[df["output"] != ""].drop_duplicates(subset=["model", "prompt", "output"])
     print("non-empty, no duplicates:", len(df))
 
-    # temporary: see which models are in the data
-    print(df["model"].value_counts().to_string())
+    df["llm_name"] = df["model"].apply(model_to_family)
+    df = df.dropna(subset=["llm_name"])
+    print("responses available per family:")
+    print(df["llm_name"].value_counts().to_string())
 
 if __name__ == "__main__":
     main()
