@@ -57,8 +57,17 @@ def main():
     battles = pd.DataFrame(battles)
     print("english + single-turn:", len(battles))
 
-    # temporary: check one battle looks right
-    print(battles.iloc[0])
+        # one row per model response
+    df = pd.concat([
+        battles[["prompt", "is_code", "model_a", "output_a"]].rename(columns={"model_a": "model", "output_a": "output"}),
+        battles[["prompt", "is_code", "model_b", "output_b"]].rename(columns={"model_b": "model", "output_b": "output"}),
+    ], ignore_index=True)
+
+    df = df[df["output"] != ""].drop_duplicates(subset=["model", "prompt", "output"])
+    print("non-empty, no duplicates:", len(df))
+
+    # temporary: see which models are in the data
+    print(df["model"].value_counts().to_string())
 
 if __name__ == "__main__":
     main()
