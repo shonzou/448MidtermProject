@@ -64,6 +64,25 @@ def load_data():
     log(f"Single-Turn records: {len(data)}")
     return data
 
+# helper function to deal with the {"type": "text", "text": [the text]} format that a conversation's messages
+# are stored in within the dataset
+def get_text(message):
+    content = message["text"]
+
+    if isinstance(content, str):
+        return content.strip()
+
+    if isinstance(content, list):
+        text_parts = []
+        for part in content:
+            if isinstance(part, dict):
+                if part.get("type") == "text" and part.get("text"):
+                    text_parts.append(part["text"])
+
+        return "\n".join(text_parts).strip()
+    
+    return ""
+
 # i.e. turning the one record with two LLM outputs into two records with one LLM output each
 def split_records(data):
     new_records = []
@@ -74,9 +93,13 @@ def split_records(data):
             (record["model_b"], record["conversation_b"]),
         ]:
             # "user" 
-            prompt = conv[0]["content"]
+            prompt = get_text(conv[0])
             # "assistant"
-            output = conv[1]["content"]
+            output = get_text(conv[1])
+
+            # reject empty prompts and outputs
+            if not prompt or not output:   
+                continue
 
             new_records.append({
                 "model": model,
