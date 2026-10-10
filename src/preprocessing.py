@@ -12,6 +12,7 @@ DATASET_NAME = "lmarena-ai/arena-human-preference-140k"
 DATA_FILE = "data/train-00000-of-00007.parquet"
 
 CSV_FILE = Path(__file__).resolve().parent.parent / "data" / "data.csv"
+LOG_FILE = Path(__file__).resolve().parent.parent / "log" / "log.txt"
 OUTPUT_COLUMNS = ["llm_name", "model", "prompt", "output", "is_code"]
 NUM_FAMILIES = 3
 FAMILY_PATTERNS = {
@@ -232,6 +233,11 @@ def build_csv(data, path = CSV_FILE):
     df.to_csv(path, index = False, lineterminator = "\n") # alr bro who decided line_terminator shouldn't have an underscore
     log(f"Saved {len(df)} records to {path}")
 
+def save_logs():
+    LOG_FILE.parent.mkdir(parents = True, exist_ok = True)
+
+    with open(LOG_FILE, "w", encoding="utf-8") as f:
+        f.write("\n".join(saved_log) + "\n")
 
 def main():
     data = load_data()
@@ -243,6 +249,7 @@ def main():
     see_code_distr(data)
     data = shuffle_data(data)
     build_csv(data)
+    save_logs()
 
 if __name__ == "__main__":
     main()
