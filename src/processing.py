@@ -1,12 +1,14 @@
 import pandas as pd
 import re
+import copy
 import torch
 from sklearn.model_selection import train_test_split
 from collections import Counter
-from torch.utils.data import Dataset
+from torch.utils.data import TensorDataset
 import torch.nn as nn
 import sklearn.metrics as mtr
 from torch.utils.data import DataLoader
+from torch.nn.utils.rnn import pad_sequence
 from pathlib import Path
 
 CSV_FILE = (
@@ -15,38 +17,58 @@ CSV_FILE = (
 
 #TODO have these as arguments in CLI instead maybe
 SEED = 0; torch.manual_seed(SEED) # random seed
-MAX_LEN = 1024
+MAX_LEN = 256   # tokens kept from a response (or from a prompt in prompt-only runs)
+PROMPT_LEN = 64 # prompt tokens kept when the prompt and response are combined
 
+VOCAB_SIZE = 20000    # keep only the most common tokens so the embedding table stays small
 MINIMUM_FREQUENCY = 2 # number of times a word has to appear in training data to get tokenized
 
-BATCH_SIZE = 32
-EPOCHS = 20
+BATCH_SIZE = 64
+EPOCHS = 10
 LEARNING_RATE = 0.001
 
 EMBEDDING_DIM = 128
-KERNEL_SIZE = 4
+HIDDEN_DIM = 128
+KERNEL_SIZE = 6
+DROPOUT = 0.5
 
+# our models are small, a few CPU threads are faster than many
+torch.set_num_threads(4)
+
+# gradients flowing back through long stretches of padding shrink to "denormal"
+# numbers that CPUs handle very slowly (LSTM epochs on short prompts took 5x
+# longer), this rounds them to 0
+torch.set_flush_denormal(True)
+
+# words, every single punctuation / markdown / emoji character, and newlines
+# note: the first version kept words only (r"\b\w+\b") and scored ~15 points
+# lower, formatting like "**", "###", "-" bullets and line breaks is a big part
+# of an LLM's style so we keep it
 def tokenize(text):
-    return re.findall(r"\b\w+\b", text.lower())
+    return re.findall(r"\w+|[^\w\s]|\n", text.lower())
 
-def encode(text, vocab):
-    tokens = tokenize(text)
+# view = which part of the LLM interaction the classifier gets to see (RQ2)
+def get_tokens(df, view):
+    if view == "output":
+        return [tokenize(text)[:MAX_LEN] for text in df["output"]]
 
+    if view == "prompt":
+        return [tokenize(text)[:MAX_LEN] for text in df["prompt"]]
+
+    # both: the prompt gets its own budget so a long prompt can't crowd out
+    # the response, "both" always sees everything "output" sees
     return [
+        tokenize(prompt)[:PROMPT_LEN] + ["<SEP>"] + tokenize(output)[:MAX_LEN]
+        for prompt, output in zip(df["prompt"], df["output"])
+    ]
+
+def encode(tokens, vocab):
+    ids = [
         vocab.get(token, vocab["<UNK>"])
         for token in tokens]
 
-# CNN requires same dimensions per record so pad with <PAD>
-def padded_encode(text, vocab):
-    ids = encode(text, vocab)
-
-    if len(ids) > MAX_LEN:
-        ids = ids[:MAX_LEN]
-
-    if len(ids) < MAX_LEN:
-        ids += [vocab["<PAD>"]] * (MAX_LEN - len(ids))
-
-    return ids
+    # an empty text still needs one token
+    return ids or [vocab["<UNK>"]]
 
 # validation
 def get_predictions(model, loader, device):
@@ -75,16 +97,22 @@ def evaluate_acc(model, loader, device):
 # validation
 def evaluate_model(model, test_loader, device, label_map):
     predictions, actual = get_predictions(model, test_loader, device)
-    
+    labels = list(label_map.values())
+
     # gauge the accuracy of the model
     acc = mtr.accuracy_score(actual, predictions)
     acc_balanced = mtr.balanced_accuracy_score(actual, predictions)
     per_class_report = mtr.classification_report(
         actual,
         predictions,
-        target_names=list(label_map.keys())
+        labels=labels,
+        target_names=list(label_map.keys()),
+        digits=3,
+        zero_division=0
     )
     print(per_class_report)
+    print("confusion matrix (rows = true family, columns = predicted)")
+    print(mtr.confusion_matrix(actual, predictions, labels=labels))
     print(f"{'Accuracy:':<20}{acc:.2%}\n{'Balanced Accuracy:':<20}{acc_balanced:.2%}")
     return {
         "Accuracy": acc,
@@ -105,16 +133,19 @@ class CNNClassifier(nn.Module):
         )
 
         # 1D convoluition
-        self.conv = nn.Conv1d( 
+        self.conv = nn.Conv1d(
             in_channels = EMBEDDING_DIM,
             out_channels = EMBEDDING_DIM, # number of channels in new sequence
-            kernel_size = KERNEL_SIZE # number of tokens processed (sliding window) at a time 
+            kernel_size = KERNEL_SIZE # number of tokens processed (sliding window) at a time
         )
 
         # this is an activation function type (I grabbed from EE 456)
-        self.relu = nn.ReLU() 
+        self.relu = nn.ReLU()
         # variant of max pooling (ch 7) grabbing strongest activation for each feature across ENTIRE sequence
-        self.pool = nn.AdaptiveMaxPool1d(1) 
+        self.pool = nn.AdaptiveMaxPool1d(1)
+
+        # randomly zero features while training to fight overfitting
+        self.dropout = nn.Dropout(DROPOUT)
 
         # linear transformation
         self.fc = nn.Linear(
@@ -122,7 +153,7 @@ class CNNClassifier(nn.Module):
             num_classes
         )
 
-    # forward pass 
+    # forward pass
     def forward(self, features):
         features = self.embedding(features)
 
@@ -135,37 +166,59 @@ class CNNClassifier(nn.Module):
 
         features = features.squeeze(-1)       # remove a remaining unneeded dimension
 
-        logits = self.fc(features)            # note: a logit is the final layer of vectors (raw predictions) 
+        features = self.dropout(features)
+
+        logits = self.fc(features)            # note: a logit is the final layer of vectors (raw predictions)
         return logits
 
-#TODO: Implement RNN using LSTM
+# bidirectional LSTM: reads the text left->right and right->left, then keeps
+# the strongest value of each hidden unit across all positions (max pooling)
+class LSTMClassifier(nn.Module):
+    def __init__(self, vocab_size, num_classes):
+        super().__init__()
 
-class TextDataset(Dataset):
-    # initialize dataset
-    def __init__(
-        self, dataframe, text_column, label_map, vocab):
-        self.texts = dataframe[text_column].tolist()
-        self.labels = [
-            label_map[label]
-            for label in dataframe["llm_name"]
-        ]
-        self.vocab = vocab
+        self.embedding = nn.Embedding(
+            vocab_size,
+            EMBEDDING_DIM,
+            padding_idx = 0 # token 0 <PAD> in vocab is the padding ID
+        )
 
-    def __len__(self):
-        return len(self.texts)
+        self.lstm = nn.LSTM(
+            EMBEDDING_DIM,
+            HIDDEN_DIM,     # how many numbers the LSTM remembers per direction
+            batch_first = True,
+            bidirectional = True
+        )
 
-    def __getitem__(self, idx):
-        x = padded_encode(self.texts[idx], self.vocab)
-        y = self.labels[idx]
+        self.dropout = nn.Dropout(DROPOUT)
 
-        return torch.tensor(x), torch.tensor(y)
+        # 2 * HIDDEN_DIM because the forward and backward states are joined
+        self.fc = nn.Linear(
+            2 * HIDDEN_DIM,
+            num_classes
+        )
+
+    # forward pass
+    def forward(self, features):
+        features = self.embedding(features)
+
+        features, _ = self.lstm(features)       # one state per token: [batch, sequence_length, 2 * HIDDEN_DIM]
+
+        features = features.max(dim=1).values   # strongest value of each hidden unit: [batch, 2 * HIDDEN_DIM]
+
+        features = self.dropout(features)
+
+        logits = self.fc(features)            # note: a logit is the final layer of vectors (raw predictions)
+        return logits
 
 def load_data():
-    df = pd.read_csv(CSV_FILE) 
-    
+    # keep_default_na=False so a prompt like "NA" or "null" stays text
+    # instead of turning into NaN and crashing tokenize()
+    df = pd.read_csv(CSV_FILE, keep_default_na=False)
+
     print(df.head())
     print(df["llm_name"].value_counts())
-    return df 
+    return df
 
 def split_data(df):
     # split by prompt so that the same prompt doesn't get put in two diff sets
@@ -192,7 +245,7 @@ def split_data(df):
 
     return train_df, val_df, test_df
 
-def build_vocab(train_df, text_column):
+def build_vocab(train_df, view):
     vocab = {
         "<PAD>": 0,
         "<UNK>": 1
@@ -201,10 +254,10 @@ def build_vocab(train_df, text_column):
     # convert tokens to integers for processing
     counter = Counter()
 
-    for text in train_df[text_column]:
-        counter.update(tokenize(text))
+    for tokens in get_tokens(train_df, view):
+        counter.update(tokens)
 
-    for word, count in counter.items():
+    for word, count in counter.most_common(VOCAB_SIZE - len(vocab)):
         if count >= MINIMUM_FREQUENCY:
             vocab[word] = len(vocab)
 
@@ -218,50 +271,34 @@ def create_label_map(df):
         for i, label in enumerate(llm_names)
     }
 
-def create_dataloaders(
-    train_df,
-    val_df,
-    test_df,
-    text_column,
-    label_map,
-    vocab,
-):
-    # pytorch's Dataset easier interface than regular arrays
-    train_dataset = TextDataset(train_df, text_column, label_map, vocab)
-    val_dataset = TextDataset(val_df, text_column, label_map, vocab)
-    test_dataset = TextDataset(test_df, text_column, label_map, vocab)
+def make_loader(df, view, vocab, label_map, shuffle=False):
+    ids = [
+        torch.tensor(encode(tokens, vocab))
+        for tokens in get_tokens(df, view)
+    ]
 
-    # TODO: train and evaluate classifier using LLM input only for RQ2
-    # TODO: train and evaluate classifier using LLM input and output for RQ2
+    # CNN requires same dimensions per record so pad every text with <PAD> (0)
+    x = pad_sequence(ids, batch_first=True)
+    y = torch.tensor([
+        label_map[label]
+        for label in df["llm_name"]
+    ])
 
-    # wrappers for Datasets
     # give NNs {BATCH_SIZE} examples at a time
-    train_loader = DataLoader(
-        train_dataset,
+    return DataLoader(
+        TensorDataset(x, y),
         batch_size = BATCH_SIZE,
-        shuffle = True
+        shuffle = shuffle
     )
-
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size = BATCH_SIZE
-    )
-
-    test_loader = DataLoader(
-        test_dataset,
-        batch_size = BATCH_SIZE
-    )
-    return train_loader, val_loader, test_loader
 
 def train_model(
     model,
     train_loader,
     val_loader,
     device,
-    model_path,
 ):
     criterion = nn.CrossEntropyLoss()
-    
+
     # Adam adaptive learning rate optimizer from ch 9
     optimizer = torch.optim.Adam(
         model.parameters(),
@@ -271,6 +308,7 @@ def train_model(
     model = model.to(device)
 
     best_val_acc = -1
+    best_weights = None
 
     #TODO add early stopping within validation
     for epoch in range(EPOCHS):
@@ -296,11 +334,8 @@ def train_model(
         if val_acc > best_val_acc:
             best_val_acc = val_acc
 
-            # save the best found CNN based on found validation accuracy
-            torch.save(
-                model.state_dict(),
-                model_path
-            )
+            # remember the best found model based on found validation accuracy
+            best_weights = copy.deepcopy(model.state_dict())
 
         print(
             f"epoch {epoch+1}: "
@@ -308,6 +343,7 @@ def train_model(
             f"validation acc = {val_acc:.2%}"
         )
 
-    # load the best CNN
-    model.load_state_dict(torch.load(model_path, weights_only = True))
+    # go back to the best epoch, later epochs may have overfit
+    model.load_state_dict(best_weights)
     return model
+
