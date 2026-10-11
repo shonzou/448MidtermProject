@@ -5,6 +5,7 @@ import re
 from torch import manual_seed
 from collections import Counter
 from pathlib import Path
+from logger import log, save_logs, set_log_file
 
 SEED = 0; manual_seed(SEED) # random seed
 
@@ -12,7 +13,6 @@ DATASET_NAME = "lmarena-ai/arena-human-preference-140k"
 DATA_FILE = "data/train-00000-of-00007.parquet"
 
 CSV_FILE = Path(__file__).resolve().parent.parent / "data" / "data.csv"
-LOG_FILE = Path(__file__).resolve().parent.parent / "log" / "log.txt"
 OUTPUT_COLUMNS = ["llm_name", "model", "prompt", "output", "is_code"]
 NUM_FAMILIES = 3
 FAMILY_PATTERNS = {
@@ -31,12 +31,6 @@ FAMILY_PATTERNS = {
     "Kimi":     r"kimi",
     "Hunyuan":  r"hunyuan",
 }
-
-saved_log = []
-
-def log(line=""):
-    print(line)
-    saved_log.append(line)
 
 def load_data():
     # casting to avoid type errors when printing length of dataset
@@ -234,13 +228,8 @@ def build_csv(data, path = CSV_FILE):
     df.to_csv(path, index = False, lineterminator = "\n") # alr bro who decided line_terminator shouldn't have an underscore
     log(f"Saved {len(df)} records to {path}")
 
-def save_logs():
-    LOG_FILE.parent.mkdir(parents = True, exist_ok = True)
-
-    with open(LOG_FILE, "w", encoding="utf-8") as f:
-        f.write("\n".join(saved_log) + "\n")
-
 def main():
+    set_log_file("pre_logs")
     data = load_data()
     data = split_records(data)
     data = remove_duplicates(data)

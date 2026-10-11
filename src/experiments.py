@@ -13,11 +13,12 @@ RQ4  style statistics per family + ablations (retrain with one signal removed)
 
 import torch
 import processing as p
+from logger import log, save_logs
 
 
 # trains one model (model_name = "CNN" or "LSTM") and returns it with its vocab
 def run_experiment(model_name, train_df, val_df, view, label_map, device):
-    print(f"\n=====[ {model_name} on {view}, {len(train_df)} training rows ]=====")
+    log(f"\n=====[ {model_name} on {view}, {len(train_df)} training rows ]=====")
     torch.manual_seed(p.SEED)
 
     vocab = p.build_vocab(train_df, view)
@@ -50,7 +51,7 @@ def main():
     df = p.load_data()
 
     train_df, val_df, test_df = p.split_data(df)
-    print(f"{len(train_df)} train / {len(val_df)} val / {len(test_df)} test responses")
+    log(f"{len(train_df)} train / {len(val_df)} val / {len(test_df)} test responses")
 
     label_map = p.create_label_map(df)
 
@@ -62,7 +63,7 @@ def main():
 
     # tests a trained model on test_set and saves the scores for the summary
     def test(experiment, model_name, model, vocab, test_set, view="output"):
-        print(f"\n{experiment} ({model_name})")
+        log(f"\n{experiment} ({model_name})")
         res = p.evaluate_model(
             model,
             p.make_loader(test_set, view, vocab, label_map),
@@ -92,9 +93,9 @@ def main():
             test(f"RQ3 train {train_domain}, test {other_domain}", model_name, model, vocab, domains[other_domain])
 
     # RQ4: what is different about each family's responses?
-    print("\n=====[ RQ4 style statistics ]=====")
-    print("median for words / words per sentence, otherwise share of responses")
-    print(p.style_statistics(df).to_string())
+    log("\n=====[ RQ4 style statistics ]=====")
+    log("median for words / words per sentence, otherwise share of responses")
+    log(p.style_statistics(df).to_string())
 
     # retrain the CNN with one kind of signal removed from every response
     for label, remove in p.ABLATIONS.items():
@@ -105,10 +106,11 @@ def main():
         model, vocab = run_experiment("CNN", changed[0], changed[1], "output", label_map, device)
         test(f"RQ4 {label}", "CNN", model, vocab, changed[2])
 
-    print("\n=====[ test accuracy (chance = 33.3%) ]=====")
-    print(f"{'experiment':<42}{'model':<7}{'accuracy':<10}balanced accuracy")
+    log("\n=====[ test accuracy (chance = 33.3%) ]=====")
+    log(f"{'experiment':<42}{'model':<7}{'accuracy':<10}balanced accuracy")
     for experiment, model_name, res in results:
-        print(f"{experiment:<42}{model_name:<7}{res['Accuracy']:<10.1%}{res['Accuracy Balanced']:.1%}")
+        log(f"{experiment:<42}{model_name:<7}{res['Accuracy']:<10.1%}{res['Accuracy Balanced']:.1%}")
+    save_logs()
 
 
 if __name__ == "__main__":

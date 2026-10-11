@@ -10,13 +10,14 @@ import sklearn.metrics as mtr
 from torch.utils.data import DataLoader
 from torch.nn.utils.rnn import pad_sequence
 from pathlib import Path
+from logger import log, save_logs
 
 CSV_FILE = (
     Path(__file__).resolve().parent.parent / "data" / "data.csv"
 )
 
 #TODO have these as arguments in CLI instead maybe
-SEED = 0; torch.manual_seed(SEED) # random seed
+SEED = 0; torch.manual_seed(SEED)
 MAX_LEN = 256   # tokens kept from a response (or from a prompt in prompt-only runs)
 PROMPT_LEN = 64 # prompt tokens kept when the prompt and response are combined
 
@@ -110,10 +111,10 @@ def evaluate_model(model, test_loader, device, label_map):
         digits=3,
         zero_division=0
     )
-    print(per_class_report)
-    print("confusion matrix (rows = true family, columns = predicted)")
-    print(mtr.confusion_matrix(actual, predictions, labels=labels))
-    print(f"{'Accuracy:':<20}{acc:.2%}\n{'Balanced Accuracy:':<20}{acc_balanced:.2%}")
+    log(str(per_class_report))
+    log("confusion matrix (rows = true family, columns = predicted)")
+    log(str(mtr.confusion_matrix(actual, predictions, labels=labels)))
+    log(f"{'Accuracy:':<20}{acc:.2%}\n{'Balanced Accuracy:':<20}{acc_balanced:.2%}")
     return {
         "Accuracy": acc,
         "Accuracy Balanced": acc_balanced
@@ -216,8 +217,8 @@ def load_data():
     # instead of turning into NaN and crashing tokenize()
     df = pd.read_csv(CSV_FILE, keep_default_na=False)
 
-    print(df.head())
-    print(df["llm_name"].value_counts())
+    log(df.head())
+    log(df["llm_name"].value_counts())
     return df
 
 def split_data(df):
@@ -337,7 +338,7 @@ def train_model(
             # remember the best found model based on found validation accuracy
             best_weights = copy.deepcopy(model.state_dict())
 
-        print(
+        log(
             f"epoch {epoch+1}: "
             f"loss = {total_loss / len(train_loader):.4f}, "
             f"validation acc = {val_acc:.2%}"
