@@ -230,6 +230,7 @@ def build_csv(data, path = CSV_FILE):
 
     df["is_code"] = df["is_code"].astype(int)
 
+    path.parent.mkdir(parents = True, exist_ok = True)
     df.to_csv(path, index = False, lineterminator = "\n") # alr bro who decided line_terminator shouldn't have an underscore
     log(f"Saved {len(df)} records to {path}")
 
