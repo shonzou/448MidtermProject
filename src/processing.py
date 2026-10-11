@@ -343,7 +343,48 @@ def train_model(
             f"validation acc = {val_acc:.2%}"
         )
 
-    # go back to the best epoch, later epochs may have overfit
+        # go back to the best epoch, later epochs may have overfit
     model.load_state_dict(best_weights)
     return model
 
+# RQ4: simple style measurements of every response, averaged per family
+def style_statistics(df):
+    text = df["output"]
+    words = text.str.count(r"\w+")
+    first_100 = text.str.lower().str.findall(r"\w+").str[:100]
+
+    stats = pd.DataFrame({
+        "llm_name": df["llm_name"],
+
+        # linguistic
+        "words": words,
+        "words per sentence": words / text.str.count(r"[.!?]+(?:\s|$)").clip(lower=1),
+        "unique words in first 100": first_100.apply(lambda w: len(set(w)) / max(len(w), 1)),
+
+        # structural: does the response use this at least once?
+        "bold": text.str.contains(r"\*\*"),
+        "headers": text.str.contains(r"^\s*#{1,6}\s", flags=re.M),
+        "bullet lists": text.str.contains(r"^\s*[-*•]\s", flags=re.M),
+        "tables": text.str.contains(r"^\s*\|", flags=re.M),
+        "horizontal rules": text.str.contains(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$", flags=re.M),
+        "em dashes": text.str.contains("—"),
+        "curly quotes": text.str.contains("[‘’“”]"),
+        "emoji": text.str.contains("[\U0001F300-\U0001FAFF☀-➿]"),
+    })
+
+    by_family = stats.groupby("llm_name")
+    table = by_family.mean().T              # share of responses using each feature
+    table.loc["words"] = by_family["words"].median()
+    table.loc["words per sentence"] = by_family["words per sentence"].median()
+    return table.round(3)
+
+# RQ4 ablations: each one removes a kind of signal from the responses
+ABLATIONS = {
+    # removes self-identification like "I'm Claude, made by Anthropic"
+    "model names masked": lambda text: re.sub(
+        r"\b(claude|anthropic|chatgpt|gpt[-\w.]*|openai|gemini|google|deepmind|bard)\b", "model", text, flags=re.I),
+    # what the original tokenizer saw: words, no punctuation or layout
+    "words only": lambda text: " ".join(re.findall(r"\w+", text)),
+    # every word becomes "w", only punctuation / markdown / layout is left
+    "formatting only": lambda text: re.sub(r"\w+", "w", text),
+}
