@@ -2,7 +2,7 @@
 
 CMPSC 448 Midterm Project | Fall 2026 | Professor Wenpeng Yin
 
-**Team:** Anushka Shrivastava, Shon Zou, Jethin Grandhi
+**Team:** Jethin Grandhi (Team Lead), Anushka Shrivastava, Shon Zou
 
 In this project, we explore whether an LLM's response contains enough clues to identify the model family that produced it. We trained a Convolutional Neural Network (CNN) and a bidirectional Long Short-Term Memory network (LSTM) to classify responses as coming from Claude, GPT, or Gemini. Both models achieved around 90% accuracy on unseen responses, compared with a 33.3% baseline for random guessing.
 
